@@ -137,7 +137,24 @@ pub fn start_pool(
   options: List(TcpOption),
   listener_name: process.Name(listener.Message),
 ) -> Result(actor.Started(supervisor.Supervisor), actor.StartError) {
+  // Connection custody exists before the listener admits sockets. Reverse
+  // shutdown stops acceptors and the listener before their handler factory.
   supervisor.new(supervisor.OneForOne)
+  |> supervisor.add(
+    factory.worker_child(fn(socket) {
+      handler.start(Handler(
+        socket:,
+        loop: pool.handler,
+        on_init: pool.on_init,
+        on_close: pool.on_close,
+        transport: pool.transport,
+        active_state: pool.active_state,
+      ))
+    })
+    |> factory.named(pool.name)
+    |> factory.restart_strategy(supervision.Temporary)
+    |> factory.supervised,
+  )
   |> supervisor.add(
     supervision.worker(fn() {
       listener.start(port, transport, options, listener_name)
@@ -154,21 +171,6 @@ pub fn start_pool(
       })
       |> supervisor.start
     }),
-  )
-  |> supervisor.add(
-    factory.worker_child(fn(socket) {
-      handler.start(Handler(
-        socket:,
-        loop: pool.handler,
-        on_init: pool.on_init,
-        on_close: pool.on_close,
-        transport: pool.transport,
-        active_state: pool.active_state,
-      ))
-    })
-    |> factory.named(pool.name)
-    |> factory.restart_strategy(supervision.Temporary)
-    |> factory.supervised,
   )
   |> supervisor.start
 }
